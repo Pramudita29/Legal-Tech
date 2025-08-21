@@ -1,6 +1,7 @@
 {
   "name": "legal-tech-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -9,7 +10,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
@@ -23,6 +23,7 @@
     "mongoose": "^8.17.2",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
+    "router": "^2.2.0",
     "tesseract.js": "^6.0.1",
     "transliteration": "^2.3.5",
     "winston": "^3.17.0"
