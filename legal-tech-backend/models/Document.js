@@ -104,24 +104,27 @@ const DocumentSchema = new Schema(
 
 /* ===================== Validators & hooks ===================== */
 
-// Require either storage.key or filePath (legacy)
-DocumentSchema.path("storage").validate(function () {
+// ✅ Validate nested requirement safely (either storage.key or filePath)
+DocumentSchema.pre("validate", function (next) {
   const hasKey = !!this.storage?.key;
   const hasLegacy = !!this.filePath;
-  return hasKey || hasLegacy;
-}, "Either storage.key or filePath is required");
+  if (!hasKey && !hasLegacy) {
+    this.invalidate("storage.key", "Either storage.key or filePath is required");
+  }
+  next();
+});
 
-// Auto-flag needsReview on low OCR confidence
+// Auto-flag needsReview on low OCR confidence & sync metadata to storage
 DocumentSchema.pre("save", function (next) {
   if (typeof this.ocr?.avgConfidence === "number") {
     this.ocr.needsReview = this.ocr.avgConfidence < 0.85;
   }
-  // keep storage.pages synced with metadata.pages if missing
   if (!this.storage?.pages && this.metadata?.pages) {
+    this.storage ??= {};
     this.storage.pages = this.metadata.pages;
   }
-  // keep storage.sizeBytes synced with metadata.fileSize if missing
   if (!this.storage?.sizeBytes && this.metadata?.fileSize) {
+    this.storage ??= {};
     this.storage.sizeBytes = this.metadata.fileSize;
   }
   next();

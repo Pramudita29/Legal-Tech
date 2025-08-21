@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 const { Schema, Types } = mongoose;
 
 const OcrJobSchema = new Schema({
@@ -16,4 +16,4 @@ const OcrJobSchema = new Schema({
 
 OcrJobSchema.index({ status: 1, queuedAt: -1 });
 
-module.exports = mongoose.model("OcrJob", OcrJobSchema);
+export default mongoose.model("OcrJob", OcrJobSchema);
