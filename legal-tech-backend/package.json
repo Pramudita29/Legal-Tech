@@ -11,12 +11,21 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "franc": "^6.2.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.17.2",
+    "morgan": "^1.10.1",
     "multer": "^2.0.2",
-    "tesseract.js": "^6.0.1"
+    "tesseract.js": "^6.0.1",
+    "transliteration": "^2.3.5",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
