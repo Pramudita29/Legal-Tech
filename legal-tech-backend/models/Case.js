@@ -5,12 +5,12 @@ const { Schema, Types } = mongoose;
 
 const CaseSchema = new Schema(
   {
-    // Multi-tenant safety (optional but highly recommended)
+    // Multi-tenant safety
     tenantId: { type: Types.ObjectId, ref: "Tenant", index: true },
 
     // Core identifiers
-    caseNumber: { type: String, required: true, unique: true }, // e.g., "२०७९–ऋण–०१२३४"
-    caseTitle: { type: String }, // e.g., "Gopal Thapa v. Ramesh Shrestha"
+    caseNumber: { type: String, required: true }, // uniqueness enforced via compound index below
+    caseTitle: { type: String },
 
     courtLevel: {
       type: String,
@@ -18,7 +18,7 @@ const CaseSchema = new Schema(
       required: true,
     },
 
-    // Keep your original case types
+    // Case types
     caseType: {
       type: String,
       enum: [
@@ -99,9 +99,9 @@ const CaseSchema = new Schema(
       index: true,
     },
 
-    // Case lineage (for appeals / higher courts)
-    parentCaseId: { type: Types.ObjectId, ref: "Case" }, // link to lower court case
-    appealCaseId: { type: Types.ObjectId, ref: "Case" }, // link to higher court appeal
+    // Case lineage
+    parentCaseId: { type: Types.ObjectId, ref: "Case" },
+    appealCaseId: { type: Types.ObjectId, ref: "Case" },
 
     // Parties
     parties: [
@@ -126,7 +126,7 @@ const CaseSchema = new Schema(
       judgmentBS: String,
     },
 
-    // Optional quick hearing/events tracker
+    // Hearings
     hearings: [
       {
         dateAD: Date,
@@ -142,13 +142,18 @@ const CaseSchema = new Schema(
     // Assigned staff
     assignedTo: [{ userId: { type: Types.ObjectId, ref: "User" }, role: String }],
 
+    // NEW: who created this case (used for lawyer scoping)
+    createdBy: { type: Types.ObjectId, ref: "User", index: true },
   },
   { timestamps: true }
 );
 
 // Helpful indexes
-CaseSchema.index({ tenantId: 1, caseNumber: 1 }, { unique: true });
+CaseSchema.index({ tenantId: 1, caseNumber: 1 }, { unique: true });          // per-tenant unique case number
 CaseSchema.index({ tenantId: 1, status: 1 });
 CaseSchema.index({ tenantId: 1, "dates.nextHearingAD": 1 });
+// NEW: speed up scoped lookups for lawyers
+CaseSchema.index({ tenantId: 1, "assignedTo.userId": 1 });
+CaseSchema.index({ tenantId: 1, "parties.lawyer": 1 });
 
 export default mongoose.model("Case", CaseSchema);
