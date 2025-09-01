@@ -2,29 +2,28 @@
 import { Router } from "express";
 import {
   createTenant,
-  getTenantById,
   createUser,
-  listUsersByTenant,
-  getUserById,
-  updateUser,
   deleteUser,
-  login
+  getTenantById,
+  getUserById,
+  listUsersByTenant,
+  login,
+  updateUser
 } from "../controllers/userController.js";
+import { requireAuth } from "../security/auth.js";
 
 const r = Router();
 
-// Tenants
-r.post("/tenants", createTenant);
-r.get("/tenants/:id", getTenantById);
-
-// Users
-r.post("/users", createUser);
-r.get("/tenants/:tenantId/users", listUsersByTenant);
-r.get("/users/:id", getUserById);
-r.patch("/users/:id", updateUser);
-r.delete("/users/:id", deleteUser);
-
-// Simple login (no JWT yet)
+// Public
 r.post("/auth/login", login);
+r.post("/tenants", createTenant);
+
+// Protected
+r.get("/tenants/:tenantId", requireAuth, getTenantById);
+r.post("/users", requireAuth, createUser);
+r.get("/tenants/:tenantId/users", requireAuth, listUsersByTenant);
+r.get("/users/:id", requireAuth, getUserById);
+r.patch("/users/:id", requireAuth, updateUser);
+r.delete("/users/:id", requireAuth, deleteUser);
 
 export default r;

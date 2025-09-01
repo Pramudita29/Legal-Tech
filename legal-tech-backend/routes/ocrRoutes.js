@@ -8,17 +8,20 @@ import {
   getOcrJob,
   listOcrJobs
 } from "../controllers/ocrController.js";
+import { requireAuth, allowRoles, requireWorkerOrAuth } from "../security/auth.js";
 
 const r = Router();
 
-// Jobs lifecycle
-r.post("/ocr/jobs/queue", queueOcr);
-r.post("/ocr/jobs/:id/start", startOcrJob);
-r.post("/documents/:id/ocr-result", saveOcrResult); // worker posts result
-r.post("/ocr/jobs/:id/fail", failOcrJob);
+// Most OCR endpoints require auth...
+r.post("/ocr/jobs/queue", requireAuth, allowRoles("Admin", "Lawyer"), queueOcr);
+r.post("/ocr/jobs/:id/start", requireAuth, allowRoles("Admin"), startOcrJob);
 
-// Jobs read
-r.get("/ocr/jobs/:id", getOcrJob);
-r.get("/ocr/jobs", listOcrJobs);
+// ...but OCR worker can POST results with X-OCR-Worker-Key header OR a user token
+r.post("/documents/:id/ocr-result", requireWorkerOrAuth, saveOcrResult);
+r.post("/ocr/jobs/:id/fail", requireWorkerOrAuth, failOcrJob);
+
+// Reads require auth
+r.get("/ocr/jobs/:id", requireAuth, getOcrJob);
+r.get("/ocr/jobs", requireAuth, listOcrJobs);
 
 export default r;
