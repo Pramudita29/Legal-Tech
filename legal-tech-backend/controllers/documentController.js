@@ -1,12 +1,12 @@
-// controllers/documentController.js (ESM) — matches your models/document.js
+// controllers/documentController.js (ESM)
+import crypto from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
-import path from "path";
-import crypto from "crypto";
 import multer from "multer";
-import Document from "../models/document.js";
+import path from "path";
 import Case from "../models/case.js";
-import OcrJob from "../models/OcrJob.js"; // ensure filename/casing matches your project
+import Document from "../models/document.js";
+import OcrJob from "../models/OcrJob.js";
 
 /* ---------------- multer (local disk). swap to S3/MinIO later ---------------- */
 const UPLOAD_DIR = path.resolve("uploads");
@@ -45,46 +45,73 @@ const sha256File = async (absPath) =>
 const pick = (obj, fields) =>
   Object.fromEntries(Object.entries(obj || {}).filter(([k]) => fields.includes(k)));
 
+/* ---------- access scope helpers ---------- */
+const caseScopeFilter = (req) => {
+  const tenantPart = req.tenantId ? { tenantId: req.tenantId } : {};
+  if (req.user?.role === "Admin") return tenantPart;
+  const uid = req.user?._id;
+  if (!uid) return { _id: null };
+  return {
+    ...tenantPart,
+    $or: [
+      { "assignedTo.userId": uid },
+      { "parties.lawyer": uid },
+      { createdBy: uid },
+    ],
+  };
+};
+
+// Ensure the current user can access a given caseId
+async function assertCaseAccess(req, caseId) {
+  const filter = { _id: caseId, ...caseScopeFilter(req) };
+  const ok = await Case.exists(filter);
+  if (!ok) {
+    const existsInTenant = await Case.exists({ _id: caseId, tenantId: req.tenantId });
+    if (existsInTenant) {
+      const err = new Error("Forbidden");
+      err.statusCode = 403;
+      throw err;
+    }
+    const err = new Error("Case not found");
+    err.statusCode = 404;
+    throw err;
+  }
+}
+
 /* ---------------- controllers ---------------- */
 
 /**
  * POST /documents/upload
- * multipart/form-data fields:
- *   - file (required)
- *   - caseId (required)
- *   - documentType (required; must be one of your enum)
- *   - uploadedBy (required for now since model requires it)
- *   - tenantId (optional for now; if you use tenants already, send it)
- *   - exhibitNo, exhibitTitle (optional; for Evidence)
  */
 export const uploadDocument = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
+    const userId = req.user?._id;
     const {
       caseId,
       documentType,
-      uploadedBy,
-      tenantId,          // optional now
+      uploadedBy = userId,
+      tenantId = req.tenantId,
       exhibitNo,
       exhibitTitle
     } = req.body;
 
-    if (!caseId || !documentType || !uploadedBy) {
-      return res.status(400).json({ message: "caseId, documentType, and uploadedBy are required" });
+    if (!caseId || !documentType) {
+      return res.status(400).json({ message: "caseId and documentType are required" });
     }
+    if (!tenantId) return res.status(400).json({ message: "tenantId is required" });
+    if (!uploadedBy) return res.status(401).json({ message: "Auth required" });
 
-    // verify case exists
-    const caseDoc = await Case.findById(caseId).select("_id");
-    if (!caseDoc) return res.status(404).json({ message: "Case not found" });
+    // SCOPE: user must be allowed to touch this case
+    await assertCaseAccess(req, caseId);
 
     // compute SHA-256 for dedupe/integrity
     const abs = req.file.path;
     const sha256 = await sha256File(abs);
 
-    // build payload to match your Document model
     const payload = {
-      tenantId: tenantId || undefined,
+      tenantId,
       caseId,
       documentType,
       uploadedBy,
@@ -92,17 +119,13 @@ export const uploadDocument = async (req, res) => {
       storage: {
         provider: "local",
         bucket: null,
-        key: path.basename(abs),     // local filename as key
+        key: path.basename(abs),
         mimeType: req.file.mimetype,
         sizeBytes: req.file.size,
-        // pages: set later once you parse PDF, if you want
         sha256
       },
-      filePath: abs,                 // keep legacy path (your validator accepts key OR filePath)
-      metadata: {
-        fileSize: req.file.size,
-        fileType: req.file.mimetype
-      },
+      filePath: abs,
+      metadata: { fileSize: req.file.size, fileType: req.file.mimetype },
       language: { iso: "ne", script: "Devanagari", mixed: true },
       source: { ingest: "upload" },
       ocr: { status: "pending", needsReview: false }
@@ -115,13 +138,13 @@ export const uploadDocument = async (req, res) => {
     const doc = await Document.create(payload);
 
     // attach to case
-    await Case.updateOne({ _id: caseId }, { $addToSet: { documents: doc._id } });
+    await Case.updateOne({ _id: caseId, tenantId }, { $addToSet: { documents: doc._id } });
 
-    // queue OCR job (optional but recommended)
+    // queue OCR job
     let ocrJobId = null;
     try {
       const job = await OcrJob.create({
-        tenantId: tenantId || undefined,
+        tenantId,
         documentId: doc._id,
         status: "queued",
         engine: "tesseract-nepali-5.4",
@@ -131,42 +154,40 @@ export const uploadDocument = async (req, res) => {
       doc.ocrJob = job._id;
       await doc.save();
       ocrJobId = job._id;
-    } catch (_) {
-      // if ocr model not set up yet, just ignore; doc.ocr.status remains 'pending'
-    }
+    } catch (_) {}
 
     return res.status(201).json({ document: doc, ocrJobId });
   } catch (error) {
-    // cleanup the uploaded file if DB ops fail
     if (req.file?.path) {
       try { await fsp.unlink(req.file.path); } catch {}
     }
+    const status = error.statusCode || 500;
     if (error.message?.includes("Unsupported file type")) {
       return res.status(415).json({ message: error.message });
     }
     if (error?.code === 11000) {
-      // likely due to unique sparse index on storage.sha256 (or tenant+sha256)
       return res.status(409).json({ message: "Duplicate document (same file hash)" });
     }
-    return res.status(500).json({ message: error.message });
+    return res.status(status).json({ message: error.message });
   }
 };
 
 /**
- * GET /cases/:caseId/documents?page=&limit=&type=
+ * GET /cases/:caseId/documents
  */
 export const getDocumentsByCase = async (req, res) => {
   try {
     const { caseId } = req.params;
     const { page = "1", limit = "20", type } = req.query;
+    const tenantId = req.tenantId;
 
-    const exists = await Case.exists({ _id: caseId });
-    if (!exists) return res.status(404).json({ message: "Case not found" });
+    // SCOPE: can this user see this case?
+    await assertCaseAccess(req, caseId);
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-    const filter = { caseId };
+    const filter = { caseId, tenantId };
     if (type) filter.documentType = type;
 
     const [items, total] = await Promise.all([
@@ -181,7 +202,8 @@ export const getDocumentsByCase = async (req, res) => {
 
     return res.json({ page: pageNum, limit: limitNum, total, items });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ message: error.message });
   }
 };
 
@@ -190,38 +212,48 @@ export const getDocumentsByCase = async (req, res) => {
  */
 export const getDocumentById = async (req, res) => {
   try {
-    const doc = await Document.findById(req.params.id)
+    const tenantId = req.tenantId;
+    const doc = await Document.findOne({ _id: req.params.id, tenantId })
       .populate({ path: "ocrJob", select: "status queuedAt startedAt finishedAt engine attempt" });
 
     if (!doc) return res.status(404).json({ message: "Document not found" });
+
+    // SCOPE: verify parent case access
+    await assertCaseAccess(req, doc.caseId);
+
     return res.json(doc);
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ message: error.message });
   }
 };
 
 /**
  * PATCH /documents/:id
- * Allow updating safe fields only (exhibit, language, documentType)
  */
 export const updateDocument = async (req, res) => {
   try {
+    const tenantId = req.tenantId;
     const allowed = ["exhibit", "language", "documentType"];
     const updates = pick(req.body, allowed);
 
+    // Load first to check scope
+    const current = await Document.findOne({ _id: req.params.id, tenantId }).lean();
+    if (!current) return res.status(404).json({ message: "Document not found" });
+
+    await assertCaseAccess(req, current.caseId);
+
     const updated = await Document.findOneAndUpdate(
-      { _id: req.params.id },
+      { _id: current._id, tenantId },
       updates,
       { new: true, runValidators: true }
     );
 
-    if (!updated) return res.status(404).json({ message: "Document not found" });
     return res.json(updated);
   } catch (error) {
-    if (error?.code === 11000) {
-      return res.status(409).json({ message: "Duplicate constraint" });
-    }
-    return res.status(500).json({ message: error.message });
+    if (error?.code === 11000) return res.status(409).json({ message: "Duplicate constraint" });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ message: error.message });
   }
 };
 
@@ -230,11 +262,15 @@ export const updateDocument = async (req, res) => {
  */
 export const requeueOcr = async (req, res) => {
   try {
-    const doc = await Document.findById(req.params.id);
+    const tenantId = req.tenantId;
+    const doc = await Document.findOne({ _id: req.params.id, tenantId });
     if (!doc) return res.status(404).json({ message: "Document not found" });
 
+    // SCOPE: verify parent case access
+    await assertCaseAccess(req, doc.caseId);
+
     const job = await OcrJob.create({
-      tenantId: doc.tenantId || undefined,
+      tenantId,
       documentId: doc._id,
       status: "queued",
       engine: "tesseract-nepali-5.4",
@@ -248,28 +284,34 @@ export const requeueOcr = async (req, res) => {
 
     return res.json({ message: "OCR re-queued", ocrJobId: job._id });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ message: error.message });
   }
 };
 
 /**
  * DELETE /documents/:id
- * Detach from case and (optionally) delete local file.
  */
 export const deleteDocument = async (req, res) => {
   try {
-    const doc = await Document.findByIdAndDelete(req.params.id);
+    const tenantId = req.tenantId;
+    const doc = await Document.findOne({ _id: req.params.id, tenantId });
     if (!doc) return res.status(404).json({ message: "Document not found" });
 
-    await Case.updateOne({ _id: doc.caseId }, { $pull: { documents: doc._id } });
+    // SCOPE: verify parent case access
+    await assertCaseAccess(req, doc.caseId);
 
-    // remove local file if present
+    await Document.deleteOne({ _id: doc._id, tenantId });
+
+    await Case.updateOne({ _id: doc.caseId, tenantId }, { $pull: { documents: doc._id } });
+
     if (doc.filePath && fs.existsSync(doc.filePath)) {
       try { await fsp.unlink(doc.filePath); } catch {}
     }
 
     return res.json({ message: "Document deleted" });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ message: error.message });
   }
 };

@@ -1,13 +1,8 @@
 // controllers/ocrController.js (ESM)
-import Document from "../models/document.js";
 import Case from "../models/case.js";
-
-// Your OcrJob and DocumentText are CommonJS; import compatibly:
-import OcrJobCjs from "../models/OcrJob.js";
-const OcrJob = OcrJobCjs.default || OcrJobCjs;
-
-import DocumentTextCjs from "../models/DocumentText.js";
-const DocumentText = DocumentTextCjs.default || DocumentTextCjs;
+import Document from "../models/document.js";
+import DocumentText from "../models/DocumentText.js";
+import OcrJob from "../models/OcrJob.js";
 
 /* ---------------- small utils ---------------- */
 const pick = (obj, fields) =>
@@ -20,7 +15,7 @@ const toAsciiDigits = (s = "") =>
 const normalizeNepali = (s = "") =>
   s
     .normalize("NFC")
-    .replace(/\u200B|\u200C|\u200D|\u00AD/g, "") // zero-width & soft hyphen
+    .replace(/\u200B|\u200C|\u200D|\u00AD/g, "")
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .trim();
@@ -47,11 +42,46 @@ const typeToSection = (t = "") => {
   return map[t] || "other";
 };
 
+/* ---------- access scope helpers ---------- */
+const caseScopeFilter = (req) => {
+  const tenantPart = req.tenantId ? { tenantId: req.tenantId } : {};
+  if (req.user?.role === "Admin") return tenantPart;
+  const uid = req.user?._id;
+  if (!uid) return { _id: null };
+  return {
+    ...tenantPart,
+    $or: [
+      { "assignedTo.userId": uid },
+      { "parties.lawyer": uid },
+      { createdBy: uid },
+    ],
+  };
+};
+
+async function assertCaseAccess(req, caseId) {
+  const filter = { _id: caseId, ...caseScopeFilter(req) };
+  const ok = await Case.exists(filter);
+  if (!ok) {
+    const existsInTenant = await Case.exists({ _id: caseId, tenantId: req.tenantId });
+    if (existsInTenant) {
+      const err = new Error("Forbidden");
+      err.statusCode = 403;
+      throw err;
+    }
+    const err = new Error("Case not found");
+    err.statusCode = 404;
+    throw err;
+  }
+}
+
+const isWorker = (req) =>
+  !!req.headers["x-ocr-worker-key"] &&
+  req.headers["x-ocr-worker-key"] === process.env.OCR_WORKER_KEY;
+
 /* ---------------- Controllers ---------------- */
 
 /**
  * POST /ocr/jobs/queue
- * body: { documentId }
  */
 export const queueOcr = async (req, res) => {
   try {
@@ -60,6 +90,9 @@ export const queueOcr = async (req, res) => {
 
     const doc = await Document.findById(documentId);
     if (!doc) return res.status(404).json({ message: "Document not found" });
+
+    // SCOPE (Admin/Lawyer): must be able to access the parent case
+    await assertCaseAccess(req, doc.caseId);
 
     const job = await OcrJob.create({
       tenantId: doc.tenantId || undefined,
@@ -77,19 +110,27 @@ export const queueOcr = async (req, res) => {
 
     return res.status(201).json({ jobId: job._id });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };
 
 /**
  * POST /ocr/jobs/:id/start
- * body: { engine? }
  */
 export const startOcrJob = async (req, res) => {
   try {
     const job = await OcrJob.findById(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
-    if (job.status !== "queued") return res.status(409).json({ message: `Job not queued (status=${job.status})` });
+
+    // SCOPE: user must be able to access the parent case of the doc
+    const doc = await Document.findById(job.documentId);
+    if (!doc) return res.status(404).json({ message: "Document not found" });
+    await assertCaseAccess(req, doc.caseId);
+
+    if (job.status !== "queued") {
+      return res.status(409).json({ message: `Job not queued (status=${job.status})` });
+    }
 
     const engine = req.body?.engine || job.engine || "tesseract-nepali-5.4";
     job.status = "running";
@@ -97,7 +138,6 @@ export const startOcrJob = async (req, res) => {
     job.startedAt = new Date();
     await job.save();
 
-    // mark document as running
     await Document.updateOne(
       { _id: job.documentId },
       { $set: { "ocr.status": "running" } }
@@ -105,29 +145,13 @@ export const startOcrJob = async (req, res) => {
 
     return res.json({ message: "Job started", jobId: job._id, engine });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };
 
 /**
- * POST /documents/:id/ocr-result
- * (Worker posts OCR output here to COMPLETE a job)
- * Optional query: ?jobId=<jobId>
- * body example:
- * {
- *   "fullText": "...",
- *   "avgConfidence": 0.91,
- *   "perPage": [{"page":1,"confidence":0.9,"textLen":1234,"textDensity":0.65}],
- *   "autoSections":[{"label":"petition","pageStart":3,"pageEnd":9,"confidence":0.82}],
- *   "entities":[{"type":"person","value":"गोपाल थापा","page":3,"offset":52}],
- *   "searchHints":["गोपाल थापा","जिल्ला अदालत काठमाडौं"],
- *   "extraction": {
- *     "dates": { "ad": ["2024-06-02T00:00:00.000Z"], "bs": ["2081/02/20"] },
- *     "caseNumbers": ["2079-01234"],
- *     "parties": { "persons": ["गोपाल थापा"], "orgs": ["नेपाल बैंक"] }
- *   },
- *   "metrics": { "pages": 12, "durationMs": 8450, "garbageRate": 0.03 }
- * }
+ * POST /documents/:id/ocr-result  (worker or user)
  */
 export const saveOcrResult = async (req, res) => {
   try {
@@ -136,6 +160,11 @@ export const saveOcrResult = async (req, res) => {
 
     const doc = await Document.findById(documentId);
     if (!doc) return res.status(404).json({ message: "Document not found" });
+
+    // If not a worker request, enforce user scope
+    if (!isWorker(req)) {
+      await assertCaseAccess(req, doc.caseId);
+    }
 
     const {
       fullText,
@@ -152,7 +181,9 @@ export const saveOcrResult = async (req, res) => {
       return res.status(400).json({ message: "fullText (string) is required" });
     }
 
-    // normalize & mirrors
+    const tenantId = doc.tenantId || req.tenantId;
+    if (!tenantId) return res.status(400).json({ message: "tenantId required" });
+
     const fullText_ne_norm = normalizeNepali(fullText);
     const numbers_ascii = toAsciiDigits(fullText_ne_norm);
     const textHash = await sha256Text(fullText_ne_norm);
@@ -166,16 +197,14 @@ export const saveOcrResult = async (req, res) => {
 
     const section = typeToSection(doc.documentType);
 
-    // upsert DocumentText (unique per documentId)
     const upsert = {
-      tenantId: doc.tenantId || undefined,
+      tenantId,
       documentId: doc._id,
       caseId: doc.caseId,
       section,
       fullText,
       fullText_ne_norm,
       numbers_ascii,
-      // fullText_ne_tokens, fullText_roman can be filled later if needed
       docTypeHints: [],
       entities,
       searchHints,
@@ -193,12 +222,11 @@ export const saveOcrResult = async (req, res) => {
     };
 
     const docText = await DocumentText.findOneAndUpdate(
-      { documentId: doc._id, tenantId: doc.tenantId || undefined },
+      { documentId: doc._id, tenantId },
       upsert,
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // update Document.ocr
     doc.ocr = doc.ocr || {};
     if (typeof avgConfidence === "number") {
       doc.ocr.avgConfidence = avgConfidence;
@@ -208,7 +236,6 @@ export const saveOcrResult = async (req, res) => {
       doc.ocr.perPage = perPage.map((p) => pick(p, ["page", "confidence"]));
     }
     if (typeof metrics?.pages === "number") {
-      // sync pages count into storage if missing
       if (!doc.storage?.pages) doc.storage.pages = metrics.pages;
       if (!doc.metadata?.pages) doc.metadata = { ...(doc.metadata || {}), pages: metrics.pages };
     }
@@ -216,7 +243,6 @@ export const saveOcrResult = async (req, res) => {
     doc.ocr.textDocId = docText._id;
     await doc.save();
 
-    // finalize job if provided
     if (jobId) {
       const job = await OcrJob.findById(jobId);
       if (job) {
@@ -231,23 +257,29 @@ export const saveOcrResult = async (req, res) => {
       }
     }
 
-    // ensure document is linked on case
     await Case.updateOne({ _id: doc.caseId }, { $addToSet: { documents: doc._id } });
 
     return res.status(200).json({ message: "OCR result saved", documentTextId: docText._id });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };
 
 /**
- * POST /ocr/jobs/:id/fail
- * body: { message, stack?, metrics? }
+ * POST /ocr/jobs/:id/fail  (worker or user)
  */
 export const failOcrJob = async (req, res) => {
   try {
     const job = await OcrJob.findById(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
+
+    // Enforce scope for non-worker calls
+    if (!isWorker(req)) {
+      const doc = await Document.findById(job.documentId);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      await assertCaseAccess(req, doc.caseId);
+    }
 
     job.status = "failed";
     job.finishedAt = new Date();
@@ -258,7 +290,6 @@ export const failOcrJob = async (req, res) => {
     if (req.body?.metrics) job.metrics = pick(req.body.metrics, ["pages", "durationMs", "garbageRate"]);
     await job.save();
 
-    // mark document failed (unless it already completed)
     await Document.updateOne(
       { _id: job.documentId, "ocr.status": { $ne: "completed" } },
       { $set: { "ocr.status": "failed" } }
@@ -266,7 +297,8 @@ export const failOcrJob = async (req, res) => {
 
     return res.json({ message: "Job marked as failed" });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };
 
@@ -277,14 +309,25 @@ export const getOcrJob = async (req, res) => {
   try {
     const job = await OcrJob.findById(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
+
+    // Admin: fine. Lawyer: must have access to the job's document's case
+    if (req.user?.role !== "Admin") {
+      const doc = await Document.findById(job.documentId).lean();
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      await assertCaseAccess(req, doc.caseId);
+    }
+
     return res.json(job);
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };
 
 /**
  * GET /ocr/jobs?status=&docId=&page=&limit=
+ * Admin: all jobs in tenant
+ * Lawyer: only jobs for documents whose cases they can access
  */
 export const listOcrJobs = async (req, res) => {
   try {
@@ -292,9 +335,30 @@ export const listOcrJobs = async (req, res) => {
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-    const filter = {};
+    let filter = {};
     if (status) filter.status = status;
     if (docId) filter.documentId = docId;
+
+    if (req.user?.role === "Admin") {
+      // Admin scoping by tenant only (if you store tenantId on job)
+      if (req.tenantId) filter.tenantId = req.tenantId;
+    } else {
+      // Lawyer: restrict to docs of accessible cases
+      const accessibleCases = await Case.find(caseScopeFilter(req)).select("_id").lean();
+      const caseIds = accessibleCases.map((c) => c._id);
+      if (!caseIds.length) {
+        return res.json({ page: pageNum, limit: limitNum, total: 0, items: [] });
+      }
+      const docs = await Document.find({
+        tenantId: req.tenantId,
+        caseId: { $in: caseIds }
+      }).select("_id").lean();
+      const docIds = docs.map((d) => d._id);
+      if (!docIds.length) {
+        return res.json({ page: pageNum, limit: limitNum, total: 0, items: [] });
+      }
+      filter.documentId = docId ? docId : { $in: docIds };
+    }
 
     const [items, total] = await Promise.all([
       OcrJob.find(filter)
@@ -307,6 +371,7 @@ export const listOcrJobs = async (req, res) => {
 
     return res.json({ page: pageNum, limit: limitNum, total, items });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ message: err.message });
   }
 };

@@ -2,6 +2,8 @@
 import bcrypt from "bcryptjs";
 import Tenant from "../models/Tenant.js";
 import User from "../models/User.js";
+import { signToken } from "../security/auth.js";
+
 
 /* ---------------- small utils ---------------- */
 const pick = (obj, fields) =>
@@ -158,22 +160,19 @@ export const deleteUser = async (req, res) => {
   }
 };
 
-/* ---------------- (Optional) simple login for now ---------------- */
-// POST /auth/login  { email, password }
+
 export const login = async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ message: "email and password are required" });
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ message: "email and password are required" });
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+  const user = await User.findOne({ email });
+  if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
-    // no JWT yet—return basic profile; add JWT later
-    return res.json(safeUser(user));
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
+  const token = signToken(user);
+  const profile = { _id: user._id, name: user.name, email: user.email, role: user.role, tenantId: user.tenantId };
+
+  return res.json({ token, user: profile });
 };
