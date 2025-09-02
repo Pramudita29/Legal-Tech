@@ -1,27 +1,30 @@
 // routes/users.js
 import { Router } from "express";
 import {
-  createTenant,
   createUser,
   deleteUser,
-  getTenantById,
   getUserById,
-  listUsersByTenant,
+  listUsersInOrg,
   login,
-  updateUser
+  registerAdmin,
+  updateUser,
 } from "../controllers/userController.js";
 import { requireAuth } from "../security/auth.js";
 
 const r = Router();
 
-// Public
+/* ---------- Public ---------- */
+r.post("/auth/register-admin", registerAdmin);
 r.post("/auth/login", login);
-r.post("/tenants", createTenant);
 
-// Protected
-r.get("/tenants/:tenantId", requireAuth, getTenantById);
+/* ---------- Protected (JWT) ---------- */
+// Admin creates lawyers in their org
 r.post("/users", requireAuth, createUser);
-r.get("/tenants/:tenantId/users", requireAuth, listUsersByTenant);
+
+// Admin lists users in their org
+r.get("/org/users", requireAuth, listUsersInOrg);
+
+// Self or Admin-in-same-org can view/update; Admin can delete org members
 r.get("/users/:id", requireAuth, getUserById);
 r.patch("/users/:id", requireAuth, updateUser);
 r.delete("/users/:id", requireAuth, deleteUser);
