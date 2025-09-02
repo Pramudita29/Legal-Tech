@@ -23,6 +23,12 @@ import { initMailer } from "./services/mailer.js";
 
 dotenv.config();
 
+console.log("ENV check:", {
+  user: process.env.GMAIL_USER,
+  pass: process.env.GMAIL_APP_PASSWORD,
+});
+
+
 // Resolve __dirname for ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
