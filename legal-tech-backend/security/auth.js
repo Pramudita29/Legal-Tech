@@ -4,10 +4,10 @@ import jwt from "jsonwebtoken";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
-/** Create a JWT for a user */
+/** Create a JWT for a user (must include orgId) */
 export function signToken(user) {
   return jwt.sign(
-    { sub: String(user._id), tenantId: String(user.tenantId), role: user.role },
+    { sub: String(user._id), orgId: String(user.orgId || user._id), role: user.role },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
@@ -21,10 +21,10 @@ export function requireAuth(req, res, next) {
     if (!token) return res.status(401).json({ message: "Unauthorized: no token" });
 
     const payload = jwt.verify(token, JWT_SECRET);
-    if (!payload?.tenantId) return res.status(400).json({ message: "tenantId missing in token" });
+    if (!payload?.orgId) return res.status(400).json({ message: "orgId missing in token" });
 
     req.user = { _id: payload.sub, role: payload.role };
-    req.tenantId = payload.tenantId;
+    req.orgId = payload.orgId;
     next();
   } catch (err) {
     return res.status(401).json({ message: "Unauthorized or expired token" });
@@ -41,11 +41,14 @@ export function allowRoles(...roles) {
   };
 }
 
-/** Allow OCR worker via shared key OR a normal authenticated user */
+/**
+ * Allow OCR worker via shared key OR a normal authenticated user.
+ * Worker calls must send:  X-OCR-Worker-Key: <key>
+ */
 export function requireWorkerOrAuth(req, res, next) {
-  const workerKey = req.headers["supersecret-678"];
+  const workerKey = req.headers["x-ocr-worker-key"];
   if (workerKey && workerKey === process.env.OCR_WORKER_KEY) {
-    // trusted worker; no tenant enforced here—if needed, you can carry tenant in header too
+    // trusted worker; skip user auth (you can also read orgId from another header if you want)
     return next();
   }
   return requireAuth(req, res, next);

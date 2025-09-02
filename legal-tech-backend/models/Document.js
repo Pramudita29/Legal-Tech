@@ -3,15 +3,20 @@ import mongoose from "mongoose";
 
 const { Schema, Types } = mongoose;
 
+/**
+ * Multitenancy model (no Tenant collection):
+ * - orgId => the organization owner’s _id (Admin user). For solo lawyers, orgId === user._id.
+ * - uploadedBy => the user who uploaded (admin or lawyer).
+ */
 const DocumentSchema = new Schema(
   {
-    // Multi-tenant (recommended)
-    tenantId: { type: Types.ObjectId, ref: "Tenant", index: true },
+    // Per-organization scoping
+    orgId: { type: Types.ObjectId, ref: "User", required: true, index: true },
 
     // Core links
     caseId: { type: Types.ObjectId, ref: "Case", required: true, index: true },
 
-    // Document kind (kept as you defined)
+    // Document kind
     documentType: {
       type: String,
       enum: [
@@ -33,7 +38,7 @@ const DocumentSchema = new Schema(
 
     // Who uploaded
     uploadedBy: { type: Types.ObjectId, ref: "User", required: true, index: true },
-    originalFilename: { type: String }, // for UI/audit
+    originalFilename: { type: String },
 
     // ---- STORAGE ----
     storage: {
@@ -132,18 +137,18 @@ DocumentSchema.pre("save", function (next) {
 
 /* ========================= Indexes ========================= */
 
-// Typical dashboards & queues
-DocumentSchema.index({ tenantId: 1, caseId: 1, documentType: 1, createdAt: -1 });
-DocumentSchema.index({ tenantId: 1, "ocr.status": 1, createdAt: -1 });
+// Typical dashboards & queues (scoped by org)
+DocumentSchema.index({ orgId: 1, caseId: 1, documentType: 1, createdAt: -1 });
+DocumentSchema.index({ orgId: 1, "ocr.status": 1, createdAt: -1 });
 DocumentSchema.index({ uploadedBy: 1, createdAt: -1 });
 
-// Dedupe per tenant (sparse allows null sha256)
+// Dedupe per org (sparse allows null sha256)
 DocumentSchema.index(
-  { tenantId: 1, "storage.sha256": 1 },
+  { orgId: 1, "storage.sha256": 1 },
   { unique: true, sparse: true }
 );
 
 // Fast “recent docs” queries
-DocumentSchema.index({ tenantId: 1, createdAt: -1 });
+DocumentSchema.index({ orgId: 1, createdAt: -1 });
 
 export default mongoose.model("Document", DocumentSchema);

@@ -3,13 +3,20 @@ import mongoose from "mongoose";
 
 const { Schema, Types } = mongoose;
 
+/**
+ * Multitenancy model (no Tenant collection):
+ * - orgId => the organization owner’s _id (Admin user). For solo lawyers, orgId === user._id.
+ * - createdBy => the user who created the case (admin or lawyer).
+ * - Access rules you'll enforce in controllers:
+ *   - Admin: can see/update/delete all cases with the same orgId.
+ *   - Lawyer: can see cases they created, or are assigned to, or are the lawyer on a party.
+ */
 const CaseSchema = new Schema(
   {
-    // Multi-tenant safety
-    tenantId: { type: Types.ObjectId, ref: "Tenant", index: true },
+    orgId: { type: Types.ObjectId, ref: "User", required: true, index: true },
 
     // Core identifiers
-    caseNumber: { type: String, required: true }, // uniqueness enforced via compound index below
+    caseNumber: { type: String, required: true }, // uniqueness enforced per org
     caseTitle: { type: String },
 
     courtLevel: {
@@ -18,7 +25,7 @@ const CaseSchema = new Schema(
       required: true,
     },
 
-    // Case types
+    // Case types (unchanged)
     caseType: {
       type: String,
       enum: [
@@ -142,18 +149,18 @@ const CaseSchema = new Schema(
     // Assigned staff
     assignedTo: [{ userId: { type: Types.ObjectId, ref: "User" }, role: String }],
 
-    // NEW: who created this case (used for lawyer scoping)
+    // Who created this case (used for lawyer scoping)
     createdBy: { type: Types.ObjectId, ref: "User", index: true },
   },
   { timestamps: true }
 );
 
-// Helpful indexes
-CaseSchema.index({ tenantId: 1, caseNumber: 1 }, { unique: true });          // per-tenant unique case number
-CaseSchema.index({ tenantId: 1, status: 1 });
-CaseSchema.index({ tenantId: 1, "dates.nextHearingAD": 1 });
-// NEW: speed up scoped lookups for lawyers
-CaseSchema.index({ tenantId: 1, "assignedTo.userId": 1 });
-CaseSchema.index({ tenantId: 1, "parties.lawyer": 1 });
+// Indexes (per-organization scoping)
+CaseSchema.index({ orgId: 1, caseNumber: 1 }, { unique: true }); // per-org unique case number
+CaseSchema.index({ orgId: 1, status: 1 });
+CaseSchema.index({ orgId: 1, "dates.nextHearingAD": 1 });
+CaseSchema.index({ orgId: 1, "assignedTo.userId": 1 });
+CaseSchema.index({ orgId: 1, "parties.lawyer": 1 });
+CaseSchema.index({ orgId: 1, createdBy: 1 });
 
 export default mongoose.model("Case", CaseSchema);
