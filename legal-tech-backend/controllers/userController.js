@@ -32,7 +32,7 @@ export const registerAdmin = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
-    // Create Admin (no orgId yet)
+    // Create Admin
     let admin = await User.create({
       name,
       email,
@@ -42,12 +42,12 @@ export const registerAdmin = async (req, res) => {
       phone,
     });
 
-    // Admin owns the org: orgId = admin._id
+    // Admin owns the org
     admin.orgId = admin._id;
     await admin.save();
 
-    const token = signToken(admin); // your signToken must include orgId
-    return res.status(201).json({ token, user: safeUser(admin) });
+    // Just return user info, no token
+    return res.status(201).json({ user: safeUser(admin) });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -175,7 +175,7 @@ export const updateUser = async (req, res) => {
       return res.status(403).json({ message: "Forbidden" });
 
     const allowed = isOrgAdminOverTarget
-      ? ["name", "role", "password", "phone","firm"]
+      ? ["name", "role", "password", "phone", "firm"]
       : ["name", "password", "phone"];
     const updates = pick(req.body, allowed);
 
