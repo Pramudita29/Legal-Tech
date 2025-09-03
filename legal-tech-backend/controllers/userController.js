@@ -52,6 +52,43 @@ export const registerAdmin = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
+/* ---------- PUBLIC: Register Lawyer (self sign-up) ----------
+   POST /auth/register-lawyer
+   body: { name, email, password, phone? }
+*/
+export const registerLawyer = async (req, res) => {
+  try {
+    const { name, email, password, phone } = req.body || {};
+    if (!name || !email || !password) {
+      return res
+        .status(400)
+        .json({ message: "name, email, and password are required" });
+    }
+
+    const exists = await User.findOne({ email }).lean();
+    if (exists) return res.status(409).json({ message: "Email already in use" });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const lawyer = await User.create({
+      name,
+      email,
+      password: hashed,
+      role: "Lawyer",
+      phone,
+      orgId: null,  // not part of an org until an Admin links them
+    });
+
+    // issue a token immediately on self-registration
+    const token = signToken(lawyer);
+    return res.status(201).json({
+      token,
+      user: safeUser(lawyer),
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
 
 /* ---------- ADMIN: Create Lawyer in org & email creds ----------
    POST /users  (requireAuth; Admin only)

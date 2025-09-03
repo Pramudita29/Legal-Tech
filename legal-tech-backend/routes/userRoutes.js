@@ -8,6 +8,7 @@ import {
   login,
   registerAdmin,
   updateUser,
+  registerLawyer
 } from "../controllers/userController.js";
 import { requireAuth } from "../security/auth.js";
 
@@ -16,6 +17,8 @@ const r = Router();
 /* ---------- Public ---------- */
 r.post("/auth/register-admin", registerAdmin);
 r.post("/auth/login", login);
+r.post("/auth/register-lawyer", registerLawyer);
+
 
 /* ---------- Protected (JWT) ---------- */
 // Admin creates lawyers in their org
