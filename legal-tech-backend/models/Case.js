@@ -163,4 +163,4 @@ CaseSchema.index({ orgId: 1, "assignedTo.userId": 1 });
 CaseSchema.index({ orgId: 1, "parties.lawyer": 1 });
 CaseSchema.index({ orgId: 1, createdBy: 1 });
 
-export default mongoose.model("Case", CaseSchema);
+export default mongoose.models.Case || mongoose.model("Case", CaseSchema);

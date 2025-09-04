@@ -17,6 +17,7 @@ import casesRouter from "./routes/caseRoutes.js";
 import documentsRouter from "./routes/documentRoutes.js";
 import ocrRouter from "./routes/ocrRoutes.js";
 import usersRouter from "./routes/userRoutes.js";
+import calendarRouter from "./routes/calendarRoutes.js"; 
 
 // mailer
 import { initMailer } from "./services/mailer.js";
@@ -86,6 +87,8 @@ app.use("/api", usersRouter); // includes /auth/register-admin and /auth/login
 app.use("/api", requireAuth, casesRouter);
 app.use("/api", requireAuth, documentsRouter);
 app.use("/api", requireAuth, ocrRouter);
+app.use("/api", requireAuth, calendarRouter); // <-- add this line
+
 
 // 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found" }));

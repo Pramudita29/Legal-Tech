@@ -19,7 +19,7 @@ const DocumentSchema = new Schema(
     // Document kind
     documentType: {
       type: String,
-      enum: [
+      enum2210:0 [
         "POA",
         "Petition",
         "Reply",

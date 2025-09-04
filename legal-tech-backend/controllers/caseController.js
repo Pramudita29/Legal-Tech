@@ -1,4 +1,4 @@
-import Case from "../models/Case.js";
+import Case from "../models/case.js";
 
 /* ---------- small utils ---------- */
 const pick = (obj, fields) =>
