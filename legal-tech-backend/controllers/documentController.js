@@ -3,7 +3,7 @@ import fs from "fs";
 import fsp from "fs/promises";
 import multer from "multer";
 import path from "path";
-import Case from "../models/Case.js";
+import Case from "../models/case.js";
 import Document from "../models/document.js";
 import OcrJob from "../models/OcrJob.js";
 
@@ -23,7 +23,11 @@ const fileFilter = (_req, file, cb) => {
   if (!ok) return cb(new Error("Unsupported file type"), false);
   cb(null, true);
 };
-export const upload = multer({ storage, fileFilter, limits: { fileSize: 50 * 1024 * 1024 } });
+export const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 500 * 1024 * 1024 } // 500MB
+});
 
 /* ------------- helpers ------------- */
 const sha256File = async (absPath) =>
@@ -40,11 +44,13 @@ const caseScopeFilter = (req) => {
   if (req.user?.role === "Admin") return orgPart;
   const uid = req.user?._id;
   if (!uid) return { _id: null };
-  return { ...orgPart, $or: [
-    { "assignedTo.userId": uid },
-    { "parties.lawyer": uid },
-    { createdBy: uid },
-  ] };
+  return {
+    ...orgPart, $or: [
+      { "assignedTo.userId": uid },
+      { "parties.lawyer": uid },
+      { createdBy: uid },
+    ]
+  };
 };
 
 async function assertCaseAccess(req, caseId) {
@@ -118,11 +124,11 @@ export const uploadDocument = async (req, res) => {
       doc.ocrJob = job._id;
       await doc.save();
       ocrJobId = job._id;
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(201).json({ document: doc, ocrJobId });
   } catch (error) {
-    if (req.file?.path) { try { await fsp.unlink(req.file.path); } catch {} }
+    if (req.file?.path) { try { await fsp.unlink(req.file.path); } catch { } }
     const status = error.statusCode || 500;
     if (error.message?.includes("Unsupported file type")) return res.status(415).json({ message: error.message });
     if (error?.code === 11000) return res.status(409).json({ message: "Duplicate document (same file hash)" });
@@ -228,7 +234,7 @@ export const deleteDocument = async (req, res) => {
     await Document.deleteOne({ _id: doc._id, orgId });
     await Case.updateOne({ _id: doc.caseId, orgId }, { $pull: { documents: doc._id } });
 
-    if (doc.filePath && fs.existsSync(doc.filePath)) { try { await fsp.unlink(doc.filePath); } catch {} }
+    if (doc.filePath && fs.existsSync(doc.filePath)) { try { await fsp.unlink(doc.filePath); } catch { } }
 
     return res.json({ message: "Document deleted" });
   } catch (error) { return res.status(error.statusCode || 500).json({ message: error.message }); }

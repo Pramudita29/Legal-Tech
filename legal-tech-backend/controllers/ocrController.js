@@ -1,4 +1,4 @@
-import Case from "../models/Case.js";
+import Case from "../models/case.js";
 import Document from "../models/document.js";
 import DocumentText from "../models/DocumentText.js";
 import OcrJob from "../models/OcrJob.js";
