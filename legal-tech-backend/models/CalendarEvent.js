@@ -1,7 +1,6 @@
 // models/CalendarEvent.js
 import mongoose from "mongoose";
-
-const { Schema } = mongoose;
+const { Schema, Types } = mongoose;
 
 const HearingSchema = new Schema({
   date: { type: Date, required: true },
@@ -13,9 +12,14 @@ const CalendarEventSchema = new Schema(
   {
     caseName: { type: String, required: true },
     court: { type: String, required: true },
-    hearings: [HearingSchema], // multiple hearings per case
+    hearings: [HearingSchema],
+
+    // Who created this event
+    createdBy: { type: Types.ObjectId, ref: "User", required: true, index: true },
+    orgId: { type: Types.ObjectId, ref: "User", required: true, index: true },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("CalendarEvent", CalendarEventSchema);
+// prevent OverwriteModelError
+export default mongoose.models.CalendarEvent || mongoose.model("CalendarEvent", CalendarEventSchema);
