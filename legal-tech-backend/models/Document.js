@@ -151,4 +151,4 @@ DocumentSchema.index(
 // Fast “recent docs” queries
 DocumentSchema.index({ orgId: 1, createdAt: -1 });
 
-export default mongoose.model("Document", DocumentSchema);
+export default mongoose.models.Document || mongoose.model("Document", DocumentSchema);
