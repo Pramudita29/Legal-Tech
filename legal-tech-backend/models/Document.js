@@ -19,7 +19,7 @@ const DocumentSchema = new Schema(
     // Document kind
     documentType: {
       type: String,
-      enum2210:0 [
+      enum: [
         "POA",
         "Petition",
         "Reply",
@@ -30,11 +30,13 @@ const DocumentSchema = new Schema(
         "High Court Appeal",
         "High Court Judgment",
         "Supreme Court Appeal",
-        "Supreme Court Judgment"
+        "Supreme Court Judgment",
+        "Combined" // <-- add this for whole uploads
       ],
-      required: true,
+      required: false, // <-- not required at schema level anymore
       index: true
     },
+
 
     // Who uploaded
     uploadedBy: { type: Types.ObjectId, ref: "User", required: true, index: true },

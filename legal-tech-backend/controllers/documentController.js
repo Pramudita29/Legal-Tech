@@ -1,3 +1,4 @@
+// controllers/documentController.js
 import crypto from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
@@ -33,8 +34,12 @@ export const upload = multer({
 const sha256File = async (absPath) =>
   new Promise((resolve, reject) => {
     const h = crypto.createHash("sha256");
-    fs.createReadStream(absPath).on("data", (d) => h.update(d)).on("end", () => resolve(h.digest("hex"))).on("error", reject);
+    fs.createReadStream(absPath)
+      .on("data", (d) => h.update(d))
+      .on("end", () => resolve(h.digest("hex")))
+      .on("error", reject);
   });
+
 const pick = (obj, fields) =>
   Object.fromEntries(Object.entries(obj || {}).filter(([k]) => fields.includes(k)));
 
@@ -45,7 +50,8 @@ const caseScopeFilter = (req) => {
   const uid = req.user?._id;
   if (!uid) return { _id: null };
   return {
-    ...orgPart, $or: [
+    ...orgPart,
+    $or: [
       { "assignedTo.userId": uid },
       { "parties.lawyer": uid },
       { createdBy: uid },
@@ -72,11 +78,21 @@ export const uploadDocument = async (req, res) => {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
     const userId = req.user?._id;
-    const { caseId, documentType, uploadedBy = userId, orgId = req.orgId, exhibitNo, exhibitTitle } = req.body;
+    const {
+      caseId,
+      documentType,
+      uploadedBy = userId,
+      orgId = req.orgId,
+      exhibitNo,
+      exhibitTitle
+    } = req.body;
 
-    if (!caseId || !documentType) return res.status(400).json({ message: "caseId and documentType are required" });
+    if (!caseId) return res.status(400).json({ message: "caseId is required" });
     if (!orgId) return res.status(400).json({ message: "orgId is required" });
     if (!uploadedBy) return res.status(401).json({ message: "Auth required" });
+
+    // If documentType not provided, default to "Combined"
+    const finalType = documentType && documentType.trim() !== "" ? documentType : "Combined";
 
     await assertCaseAccess(req, caseId);
 
@@ -86,7 +102,7 @@ export const uploadDocument = async (req, res) => {
     const payload = {
       orgId,
       caseId,
-      documentType,
+      documentType: finalType,
       uploadedBy,
       originalFilename: req.file.originalname,
       storage: {
@@ -103,13 +119,20 @@ export const uploadDocument = async (req, res) => {
       source: { ingest: "upload" },
       ocr: { status: "pending", needsReview: false }
     };
-    if (documentType === "Evidence" && (exhibitNo || exhibitTitle)) {
-      payload.exhibit = { no: exhibitNo || undefined, title: exhibitTitle || undefined };
+
+    if (finalType === "Evidence" && (exhibitNo || exhibitTitle)) {
+      payload.exhibit = {
+        no: exhibitNo || undefined,
+        title: exhibitTitle || undefined
+      };
     }
 
     const doc = await Document.create(payload);
 
-    await Case.updateOne({ _id: caseId, orgId }, { $addToSet: { documents: doc._id } });
+    await Case.updateOne(
+      { _id: caseId, orgId },
+      { $addToSet: { documents: doc._id } }
+    );
 
     let ocrJobId = null;
     try {
@@ -128,10 +151,16 @@ export const uploadDocument = async (req, res) => {
 
     return res.status(201).json({ document: doc, ocrJobId });
   } catch (error) {
-    if (req.file?.path) { try { await fsp.unlink(req.file.path); } catch { } }
+    if (req.file?.path) {
+      try {
+        await fsp.unlink(req.file.path);
+      } catch { }
+    }
     const status = error.statusCode || 500;
-    if (error.message?.includes("Unsupported file type")) return res.status(415).json({ message: error.message });
-    if (error?.code === 11000) return res.status(409).json({ message: "Duplicate document (same file hash)" });
+    if (error.message?.includes("Unsupported file type"))
+      return res.status(415).json({ message: error.message });
+    if (error?.code === 11000)
+      return res.status(409).json({ message: "Duplicate document (same file hash)" });
     return res.status(status).json({ message: error.message });
   }
 };
