@@ -38,11 +38,13 @@ const caseScopeFilter = (req) => {
 
 /* ---------- CREATE ---------- */
 // POST /cases
+/* ---------- CREATE ---------- */
+// POST /cases
 export const createCase = async (req, res) => {
   try {
     const allowed = [
-      "caseNumber","caseTitle","courtLevel","caseType","status",
-      "parentCaseId","appealCaseId","parties","dates","hearings","documents","assignedTo"
+      "caseNumber", "caseTitle", "courtLevel", "caseType", "status",
+      "parentCaseId", "appealCaseId", "parties", "dates", "hearings", "documents", "assignedTo"
     ];
     const payload = pick(req.body, allowed);
 
@@ -68,12 +70,19 @@ export const createCase = async (req, res) => {
     if (!payload.caseNumber) payload.caseNumber = genCaseNumber();
 
     const created = await Case.create(payload);
-    return res.status(201).json(created);
+
+    // Return only the case ID along with caseNumber
+    return res.status(201).json({
+      message: "Case created successfully",
+      caseId: created._id,
+      caseNumber: created.caseNumber
+    });
   } catch (error) {
     if (error?.code === 11000) return res.status(409).json({ message: "Case number already exists" });
     return res.status(500).json({ message: error.message });
   }
 };
+
 
 /* ---------- LIST ---------- */
 // GET /cases?q=&status=&courtLevel=&caseType=&page=&limit=&sort=
@@ -90,7 +99,7 @@ export const getCases = async (req, res) => {
 
     if (q && String(q).trim()) {
       const rx = new RegExp(String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [ ...(filter.$or || []), { caseNumber: rx }, { caseTitle: rx }, { "parties.name": rx } ];
+      filter.$or = [...(filter.$or || []), { caseNumber: rx }, { caseTitle: rx }, { "parties.name": rx }];
     }
 
     const cursor = Case.find(filter)
@@ -125,8 +134,8 @@ export const getCaseById = async (req, res) => {
 export const updateCase = async (req, res) => {
   try {
     const allowed = [
-      "caseTitle","courtLevel","caseType","status","parentCaseId","appealCaseId",
-      "parties","dates","hearings","documents","assignedTo"
+      "caseTitle", "courtLevel", "caseType", "status", "parentCaseId", "appealCaseId",
+      "parties", "dates", "hearings", "documents", "assignedTo"
     ];
     const updates = pick(req.body, allowed);
     if (updates.courtLevel) updates.courtLevel = toCourt(updates.courtLevel);
